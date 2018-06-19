@@ -12,232 +12,130 @@ similar to @dynamic.
 
 """
 from numpy import matrix
-from .dynamic import dynamic
+from warnings import warn
+from .component import component
+
+import numpy as np
+import pydlm.base.tools as tl
 
 
-class autoReg(dynamic):
+class autoReg(component):
     """ The autoReg class allows user to add an autoregressive component to the dlm.
-    This code implements the autoregressive component as a sub-class of
-    dynamic. Different from the dynamic component, the features in the
+    This code implements the autoregressive component as a child class of
+    component. Different from the dynamic component, the features in the
     autoReg is generated from the data, and updated according to the data.
-    All other features are similar to @dynamic.
 
     The latent states of autoReg are aligned in the order of
     [today - degree, today - degree + 1, ..., today - 2, today - 1]. Thus,
     when fetching the latents from autoReg component, use this order to
     correctly align the coefficients.
 
-    (TODO: change the implementation of autoReg, so that the component uses
-     filteredObs as the feature instead of the observed data. To do this, we
-     might need pass the dlm as a parameter to autoReg, so that autoReg can
-     fetch the filtered observation on the fly)
-
     Args:
-        data: the time series data
+        data (deprecated): Users get a warning if this argument is used.
         degree: the order of the autoregressive component
         discount: the discount factor
         name: the name of the trend component
         w: the value to set the prior covariance. Default to a diagonal
            matrix with 1e7 on the diagonal.
+        padding: either 0 or None. The number to be padded for the first degree
+                 days, as no previous data is observed to form the feature
+                 matrix
+    Examples:
+        >>>  # create a auto regression component:
+        >>> autoReg8 = autoReg(degree=8, name='autoreg8', discount = 0.99)
+        >>>  # change the autoReg8 to have covariance with diagonals are 2 and state 1
+        >>> autoReg8.createCovPrior(cov = 2)
+        >>> autoReg8.createMeanPrior(mean = 1)
 
     Attributes:
-        degree: the degree of autoregressive, i.e., how many days to look back
-        data: the time series data used for constructing the autoregressive
-              features
+        d: the degree of autoregressive, i.e., how many days to look back
+        data (deprecatd): Users get a warning if this argument is used.
         discount factor: the discounting factor
         name: the name of the component
         padding: either 0 or None. The number to be padded for the first degree
                  days, as no previous data is observed to form the feature
                  matrix
+        evaluation: the evaluation matrix for this component
+        transition: the transition matrix for this component
+        covPrior: the prior guess of the covariance matrix of the latent states
+        meanPrior: the prior guess of the latent states
 
     """
 
     def __init__(self,
-                 data=None,
+                 data=None,  # DEPRECATED
                  degree=2,
                  discount=0.99,
                  name='ar2',
                  w=100,
                  padding=0):
 
-        if data is None:
-            raise NameError('data must be provided to construct' +
-                            ' autoregressive component')
+        if data is not None:
+            warn('The data argument in autoReg is deprecated. Please avoid using it.')
 
-        # create fake data to incorporate paddings in the beginning
-        fakeData = [padding] * degree + [num for num in data]
-
-        # create features
-        features = self.createFeatureMatrix(degree=degree, data=fakeData)
-
-        dynamic.__init__(self,
-                         features=features,
-                         discount=discount,
-                         name=name,
-                         w=w)
-        self.checkDataLength()
-
-        # modify the type to be autoReg
         self.componentType = 'autoReg'
+        self.d = degree
+        self.name = name
+        self.discount = np.ones(self.d) * discount
+        self.padding = padding
 
-        # the data of the last day has to be stored,
-        # since it is not used so far and
-        # will be needed when adding new data
-        self.lastDay = data[-1]
+        # Initialize all basic quantities
+        self.evaluation = None
+        self.transition = None
+        self.covPrior = None
+        self.meanPrior = None
 
-    def createFeatureMatrix(self, degree, data):
-        """ Create the feature matrix based on the supplied data and the degree.
+        # create all basic quantities
+        self.createTransition()
+        self.createCovPrior(scale=w)
+        self.createMeanPrior()
 
-        Args:
-            degree: the auto-regressive dependency length.
-            data: the raw time series data of the model.
-        """
+        # record current step in case of lost
+        self.step = 0
 
-        # we currently don't support missing data for auto regression
-        if self.hasMissingData(data):
-            raise NameError('The package currently do not support missing ' +
-                            'for auto regression. The support has been ' +
-                            'implemented, but deprecated due to efficiency ' +
-                            'issue. Will support this in next version.')
-
-        # initialize feature matrix
-        features = []
-
-        for i in range(degree, len(data)):
-            features.append(data[(i - degree):i])
-
-        return features
-
-    # the degree cannot be longer than data
-    def checkDataLength(self):
-        """ Check whether the degree is less than the time series length
+    def createEvaluation(self, step, data):
+        """ The evaluation matrix for auto regressor.
 
         """
-        if self.d >= self.n:
-            raise NameError('The degree cannot be longer than the data series')
+        if step > len(data):
+            raise NameError("There is no sufficient data for creating autoregressor.")
+        # We pad numbers if the step is too early
+        self.evaluation = matrix([[self.padding] * (self.d - step) +
+                                  list(data[max(0, (step - self.d)) : step])])
 
-    # overide
-    def updateEvaluation(self, date):
-        if date < self.n:
-            self.evaluation = matrix(self.features[date])
-        elif date == self.n:
-            self.evaluation = matrix(self.features[-1][1:] + [self.lastDay])
+    def createTransition(self):
+        """ Create the transition matrix.
+
+        For the auto regressor component, the transition matrix is just the identity matrix
+
+        """
+        self.transition = np.matrix(np.eye(self.d))
+
+    def createCovPrior(self, cov = None, scale = 1e6):
+        """ Create the prior covariance matrix for the latent states
+
+        """
+        if cov is None:
+            self.covPrior = np.matrix(np.eye(self.d)) * scale
         else:
-            raise NameError('The step is out of range')
+            self.covPrior = cov * scale
 
-    # override
-    def appendNewData(self, newData):
-        """ Append new data to the existing features. Overriding the same method in
-        @dynamic
-
-        Args:
-            newData: a list of new data
+    def createMeanPrior(self, mean = None, scale = 1):
+        """ Create the prior latent state
 
         """
-        # fetch the last entry of the feature
-        previousDays = self.features[-1]
-        fakeData = [num for num in previousDays] + [self.lastDay] + \
-                   [num for num in newData]
-
-        # delete the first day which is duplication
-        fakeData.pop(0)
-
-        # using the constructed fake data to create new feature sets
-        newFeatures = self.createFeatureMatrix(degree=self.d, data=fakeData)
-
-        # append the new feature to the old ones
-        self.features.extend(newFeatures)
-
-        # update the last day
-        self.lastDay = newData[-1]
-
-        # update n
-        self.n = len(self.features)
-
-    # override
-    def popout(self, date):
-        """ Pop out the data of a specific date and rewrite the correct feature matrix.
-
-        Args:
-            date: the index of which to be deleted.
-
-        """
-
-        # if what popped out is the last day, we need to update last day
-        if date == self.n - 1:
-            self.lastDay = self.features[-1][-1]
-
-            # pop out the corresponding feature
-            self.features.pop(self.n - 1)
-
-        # else we can either remove the feature on the given date, but this
-        # requires regenerate the new feature matrix, which might be costly.
-        # Instead, we directly modify the affected entries in the feature
-        # matrix.
-
-        # The change starts from date + 1 to date + degree and
-        # we should do it in a reversed order
+        if mean is None:
+            self.meanPrior = np.matrix(np.zeros((self.d, 1))) * scale
         else:
-            # all the dates that are affected and need to be corrected
-            order = list(range(date + 1, min(self.n, date + self.d + 1)))
+            self.meanPrior = mean * scale
 
-            # we reverse the processing order
-            order.reverse()
-
-            for step in order:
-                # popout the deleted date
-                self.features[step].pop(self.d - (step - date))
-
-                # padding the data on the last feature to the beginning of
-                # today's feature. Note for a 3-autoReg, the feature of day
-                # is in a form of [day1, day2, day3]
-                self.features[step].insert(0, self.features[step - 1][0])
-
-            # pop out the corresponding feature
-            self.features.pop(date)
-
-        # popout the redundent feature and update the length
-        self.n -= 1
-
-        # check if the degree is longer than the data series
-        self.checkDataLength()
-
-    def alter(self, date, dataPoint):
-        """ Alter the data of a particular date, and change the corresponding
-            feature matrix.
-
-        Args:
-           date: The date to be modified.
-           dataPoint: The new dataPoint to be filled in.
+    def checkDimensions(self):
+        """ if user supplies their own covPrior and meanPrior, this can
+        be used to check if the dimension matches
 
         """
-        # if what modified is the last day, we need to update last day
-        if date == self.n - 1:
-            self.lastDay = dataPoint
+        tl.checker.checkVectorDimension(self.meanPrior, self.covPrior)
+        print('The dimesnion looks good!')
 
-        if dataPoint is None:
-            raise NameError('The package currently do not support missing ' +
-                            'for auto regression. The support has been ' +
-                            'implemented, but deprecated due to efficiency ' +
-                            'issue. Will support this in next version.')
-
-        # else we can either modify the feature on the given date, but this
-        # requires regenerate the new feature matrix, which might be costly.
-        # Instead, we directly modify the affected entries in the feature
-        # matrix.
-
-        # The change starts from date + 1 to date + degree and
-        # we should do it in a reversed order
-        else:
-            # all the dates that are affected and need to be corrected
-            order = list(range(date + 1, min(self.n, date + self.d + 1)))
-
-            # we reverse the processing order
-            order.reverse()
-
-            for step in order:
-                # popout the deleted date
-                self.features[step][self.d - (step - date)] = dataPoint
-
-        # check if the degree is longer than the data series
-        self.checkDataLength()
+    def updateEvaluation(self, date, data):
+        self.createEvaluation(step=date, data=data)

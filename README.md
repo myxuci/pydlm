@@ -6,20 +6,19 @@ Welcome to [pydlm](https://pydlm.github.io/), a flexible time series modeling li
 
 Updates in the github version
 -------------------------------------------
-* Add an auto noise initializer which initializes the model noise according to the scale of the time series. It is proved to improve the model performance over small scale data. To use auto initializer, simply call `dlm.noisePrior()` after constructing the model.
-```python
-mydlm = dlm(data) + trend(1)
-mydlm.noisePrior()
-mydlm.fit()
-```
-* Update the default variance of the components to be 100.
-* Fixed `map()` delayed evaluation bug for python3 (Thanks @bdewilde!).
-* Fixed bug in `continuePrediction()` for `autoReg` component. Now `predictN()` can work with `autoReg` (Thanks @Usman!).
-* Fixed a bug in `predictN()` which modifies the status of the dlm object. Now `dlm.predictN()` can be followed by `dlm.append()` and `dlm.fit()`. (Thanks @albertotb)
+* Plan to refactor the `dlm` class. Align with the goal to separate model and data, I'm going to refactor the `dlm` class such that
+  1. The main `dlm` class will only contain model build information and is supposed to be 'const' after construction.
+  2. Time series data will be passed in as an argument to the `fit` or `forwardFilter` and the fitted result will be returned as well as the model status.
+  3. Model status can also be passed into `fit` and `forwardFilter` as a prior.
+  The goal is to make the `dlm` class state-independent, so that the class is thread-safe and can be shared by multiple threads for parallel processing. While in progress, all the old class behavior will be kept.
+* Deprecate the `data` argument in the [`autoReg`](https://pydlm.github.io/class_ref.html#autoreg) component. Now this component gets raw data directly from the main `dlm` class for constructing its regression features. User don't need to input when instantiate `autoReg`. This refactoring is for two purposes:
+  1. The prediction function is largely simplified as `autoReg` can now handle the forecasting by itself. 
+  2. This is towards the effort to separate `data` and `model` inside `dlm`. After this change, the internal dlm-builder only holds the model info (e.g., model status and structure) and does not depend on any time series data (except features in `dynamic`). As the next step, we will allow `dlm` to export the lightweighted dlm-builder and also recreated from the dlm-builder with new data, so that streaming/batch users won't suffer from the incremental data size.
+* Version 0.1.1.10 released on PyPI.
 
 Installation
 ------------
-You can get the package (current version 0.1.1.9) from `pypi` by
+You can get the package (current version 0.1.1.10) from `pypi` by
 
       $ pip install pydlm
 

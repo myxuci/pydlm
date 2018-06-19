@@ -89,8 +89,32 @@ class dlm(_dlm):
         # This model is used for prediction. Prediction functions
         # will change the model status to forecast at a particular
         # date. Using a copied model will help the main model from
-        # being changed and behave abnormally.
+        # being changed and behaving abnormally.
         self._predictModel = None
+
+    def exportModel(self):
+        """ Export the dlm builder. Currently the method only support dlm without
+        dynamic components.
+
+        """
+        if length(self.builder.dynamicComponents) > 0:
+            raise ValueError('Cannot export dlm builder with dynamic components.')
+
+        if not self.initialized:
+            raise ValueError('Cannot export dlm before the model was initilized.')
+
+        return deepcopy(self.builder)
+
+    def buildFromModel(self, model):
+        """ Construct the dlm with exported model from other DLM with status.
+
+        Args:
+            model: The exported model from other dlm. Must be the return from
+                   dlm.exportModel()
+
+        """
+        self._initializeFromBuilder(exported_builder=model)
+
 # ===================== modeling components =====================
 
     # add component
@@ -202,9 +226,6 @@ class dlm(_dlm):
         self.turnOn('filtered plot')
         self.turnOn('predict plot')
 
-        # reset everything that needs reset
-        self._clean()
-
         if self._printInfo:
             print('Forward filtering completed.')
 
@@ -249,9 +270,6 @@ class dlm(_dlm):
 
         self.result.smoothedSteps = [self.n - backLength, self.n - 1]
         self.turnOn('smoothed plot')
-
-        # reset everything that needs reset
-        self._clean()
 
         if self._printInfo:
             print('Backward smoothing completed.')
@@ -368,8 +386,10 @@ class dlm(_dlm):
         if N < 1:
             raise NameError('N has to be greater or equal to 1')
         # Take care if features are numpy matrix
-        if isinstance(featureDict, matrix):
-            featureDict = featureDict.tolist()
+        if featureDict is not None:
+            for name in featureDict:
+                if isinstance(featureDict[name], matrix):
+                    featureDict[name] = featureDict[name].tolist()
         predictedObs = []
         predictedVar = []
 
@@ -714,9 +734,6 @@ class dlm(_dlm):
         else:
             raise NameError('Such dynamic component does not exist.')
 
-        # reset everything that needs reset
-        self._clean()
-
     # pop the data of a specific date out
     def popout(self, date):
         """ Pop out the data for a given date
@@ -755,9 +772,6 @@ class dlm(_dlm):
 
         elif self.result.smoothedSteps[0] > self.result.smoothedSteps[1]:
             self.result.smoothedSteps = [0, -1]
-
-        # reset everything that needs reset
-        self._clean()
 
     # alter the data of a specific days
     def alter(self, date, data, component='main'):
@@ -809,9 +823,6 @@ class dlm(_dlm):
 
         elif self.result.smoothedSteps[0] > self.result.smoothedSteps[1]:
             self.result.smoothedSteps = [0, -1]
-
-        # reset everything that needs reset
-        self._clean()
 
     # ignore the data of a given date
     def ignore(self, date):
@@ -1221,32 +1232,23 @@ class dlm(_dlm):
         # for chaining
         return self
 
-    def noisePrior(self, prior=1.0):
-        """ To set the prior for the observational noise.
+    def noisePrior(self, prior=0):
+        """ To set the prior for the observational noise. Calling with empty
+        argument will enable the auto noise intializer (currently, the min of 1
+        and the variance of time series).
 
         Args:
-            prior: the prior of the observational noise. The default
-        value is 1.0.
+            prior: the prior of the observational noise.
 
         Returns:
             A dlm object (for chaining purpose)
         """
-        self.options.noise=prior
-        self.initialized = False
-
-        # for chaining
-        return self
-
-    def noisePrior(self):
-        """ To set the prior for the observational noise using the auto
-        noise initializer (currently, the min of 1 and the variance of time
-        series).
-
-        Returns:
-            A dlm object (for chaining purpose)
-        """
-        self.options.useAutoNoise = True
-        self.initialized = False
+        if prior > 0:
+            self.options.noise=prior
+            self.initialized = False
+        else:
+            self.options.useAutoNoise = True
+            self.initialized = False            
 
         # for chaining
         return self
